@@ -47,4 +47,4 @@ This project is open source and free to use for educational and personal purpose
 
 ## Author
 Created for UPRAK (Ujian Praktik) and educational demonstration purposes.
-Louie Hansen Linadi @aspectxlol
+Louie Hansen Linadi @
