@@ -10,6 +10,8 @@ import os
 import csv
 import subprocess
 import sys
+import json
+import base64
 from datetime import datetime
 from pathlib import Path
 
@@ -402,7 +404,7 @@ class POS:
 			self.generate_receipt(total, cash, change, customer_name, payment_method)
 		else:  # QRIS
 			print(color("\n--- Pembayaran QRIS ---", COLOR_MENU))
-			self.display_qr_code(total)
+			self.display_qr_code(total, customer_name)
 			input(color("Tekan Enter setelah pembayaran berhasil: ", COLOR_INPUT))
 			self.generate_receipt(total, total, 0, customer_name, payment_method)
 		
@@ -439,11 +441,19 @@ class POS:
 				f.write(f"Dibayar melalui {payment_method}\n")
 		print(color(f"Struk berhasil disimpan sebagai {filename}", COLOR_OK))
 
-	def display_qr_code(self, amount: float) -> None:
+	def display_qr_code(self, amount: float, customer_name: str = "Guest") -> None:
 		"""Menampilkan kode QR di terminal untuk pembayaran QRIS."""
 		try:
+			# Prepare payment data
+			payment_data = {
+				"merchantName": "Ujian Praktek",
+				"customerName": customer_name,
+				"price": str(int(amount))
+			}
+			# Encode to base64
+			encoded_data = base64.b64encode(json.dumps(payment_data).encode()).decode()
 			# URL untuk pembayaran
-			payment_url = f"https://aspectxlol.vercel.app/uprak-pos/payment?amount={int(amount)}"
+			payment_url = f"https://aspectxlol.vercel.app/uprak-pos/payment?data={encoded_data}"
 			
 			# Generate QR code
 			qr = qrcode.QRCode(
