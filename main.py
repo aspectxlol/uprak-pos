@@ -14,12 +14,8 @@ import json
 import base64
 from datetime import datetime
 from pathlib import Path
-
-try:
-	import qrcode
-except ImportError:
-	subprocess.check_call([sys.executable, "-m", "pip", "install", "qrcode[pil]", "-q"])
-	import qrcode
+import qrcode
+import inquirer
 
 # =========================================================
 # Utilitas Warna Terminal (Color Utility)
@@ -127,6 +123,14 @@ class POS:
 			self.products = []
 			self.next_product_id = 1
 
+	def _validate_price(self, price_str: str) -> bool:
+		"""Validasi input harga."""
+		try:
+			price = float(price_str)
+			return price > 0
+		except ValueError:
+			return False
+
 	def save_products(self) -> None:
 		"""Menyimpan semua produk ke file CSV."""
 		with open(self.products_file, 'w', newline='', encoding='utf-8') as f:
@@ -145,37 +149,35 @@ class POS:
 		"""Menambahkan produk baru ke daftar dan menyimpan ke file."""
 		clear_screen()
 		print(color("=== Tambah Produk ===", COLOR_HEADER))
-		print(color("Ketik 'b' atau 'B' untuk membatalkan dan kembali ke menu utama.", COLOR_INPUT))
-		name: str = input("Nama produk: ").strip()
-		if name.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
-		price_input: str = input("Harga produk: ")
-		if price_input.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
+		
 		try:
-			price = float(price_input)
-			if price <= 0:
-				print(color("Masukkan harga yang positif.", COLOR_ERROR))
+			questions = [
+				inquirer.Text('name', message='Nama produk', validate=lambda _, x: len(x) > 0 or 'Nama tidak boleh kosong'),
+				inquirer.Text('price', message='Harga produk', validate=lambda _, x: self._validate_price(x))
+			]
+			answers = inquirer.prompt(questions)
+			
+			if answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 				pause()
 				return
-		except ValueError:
-			print(color("Masukan tidak valid. Masukkan angka.", COLOR_ERROR))
+			
+			name = answers['name'].strip()
+			price = float(answers['price'])
+			
+			product = {
+				'id': self.next_product_id,
+				'name': name,
+				'price': price
+			}
+			self.products.append(product)
+			self.next_product_id += 1
+			self.save_products()
+			print(color(f"Produk '{name}' berhasil ditambahkan dengan ID {product['id']}", COLOR_OK))
 			pause()
-			return
-		product = {
-			'id': self.next_product_id,
-			'name': name,
-			'price': price
-		}
-		self.products.append(product)
-		self.next_product_id += 1
-		self.save_products()
-		print(color(f"Produk '{name}' berhasil ditambahkan dengan ID {product['id']}", COLOR_OK))
-		pause()
+		except KeyboardInterrupt:
+			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+			pause()
 
 	def edit_product(self) -> None:
 		"""Mengedit produk yang ada dengan ID dan menyimpan ke file."""
@@ -185,45 +187,45 @@ class POS:
 			print(color("Tidak ada produk untuk diedit.", COLOR_ERROR))
 			pause()
 			return
-		self.list_products()
-		print(color("Ketik 'b' atau 'B' untuk membatalkan dan kembali ke menu utama.", COLOR_INPUT))
-		pid_input: str = input("Masukkan ID produk untuk diedit: ").strip()
-		if pid_input.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
+		
 		try:
-			pid = int(pid_input)
-		except ValueError:
-			print(color("Masukan tidak valid. Masukkan bilangan bulat.", COLOR_ERROR))
+			# Select product to edit
+			product_choices = [f"{p['id']}. {p['name']} ({format_idr(p['price'])})" for p in self.products]
+			questions = [inquirer.List('product', message='Pilih produk untuk diedit', choices=product_choices)]
+			answers = inquirer.prompt(questions)
+			
+			if answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+				pause()
+				return
+			
+			pid = int(answers['product'].split('.')[0])
+			product = next((p for p in self.products if p['id'] == pid), None)
+			
+			if not product:
+				print(color("Produk tidak ditemukan.", COLOR_ERROR))
+				pause()
+				return
+			
+			# Edit name and price
+			edit_questions = [
+				inquirer.Text('name', message=f"Nama baru (sekarang: {product['name']})", default=product['name']),
+				inquirer.Text('price', message=f"Harga baru (sekarang: {format_idr(product['price'])})", default=str(product['price']), validate=lambda _, x: self._validate_price(x))
+			]
+			edit_answers = inquirer.prompt(edit_questions)
+			
+			if edit_answers:
+				product['name'] = edit_answers['name'].strip()
+				product['price'] = float(edit_answers['price'])
+				self.save_products()
+				print(color("Produk berhasil diperbarui.", COLOR_OK))
+			else:
+				print(color("Dibatalkan.", COLOR_ERROR))
+			
 			pause()
-			return
-		product = next((p for p in self.products if p['id'] == pid), None)
-		if not product:
-			print(color("Produk tidak ditemukan.", COLOR_ERROR))
-			pause()
-			return
-		print(f"Mengedit '{product['name']}' (ID {product['id']})")
-		new_name: str = input(f"Nama baru (kosongkan untuk tetap '{product['name']}'): ").strip()
-		if new_name.lower() == 'b':
+		except KeyboardInterrupt:
 			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 			pause()
-			return
-		if new_name:
-			product['name'] = new_name
-		new_price: str = input(f"Harga baru (kosongkan untuk tetap {product['price']}): ").strip()
-		if new_price.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
-		if new_price:
-			try:
-				product['price'] = float(new_price)
-			except ValueError:
-				print(color("Harga tidak valid. Tetap menggunakan harga lama.", COLOR_ERROR))
-		self.save_products()
-		print(color("Produk berhasil diperbarui.", COLOR_OK))
-		pause()
 
 	def list_products(self, show_header=True) -> None:
 		"""Menampilkan semua produk yang tersedia."""
@@ -248,52 +250,53 @@ class POS:
 			print(color("Tidak ada produk yang tersedia.", COLOR_ERROR))
 			pause()
 			return
-		self.list_products()
-		print(color("Ketik 'b' atau 'B' untuk membatalkan dan kembali ke menu utama.", COLOR_INPUT))
-		pid_input: str = input("Masukkan ID produk untuk ditambahkan: ").strip()
-		if pid_input.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
+		
 		try:
-			pid = int(pid_input)
-		except ValueError:
-			print(color("Masukan tidak valid. Masukkan bilangan bulat.", COLOR_ERROR))
-			pause()
-			return
-		product = next((p for p in self.products if p['id'] == pid), None)
-		if not product:
-			print(color("Produk tidak ditemukan.", COLOR_ERROR))
-			pause()
-			return
-		qty_input: str = input("Jumlah: ").strip()
-		if qty_input.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
-		try:
-			qty = int(qty_input)
-			if qty <= 0:
-				print(color("Masukkan bilangan bulat yang positif.", COLOR_ERROR))
+			# Select product
+			product_choices = [f"{p['id']}. {p['name']} ({format_idr(p['price'])})" for p in self.products]
+			questions = [inquirer.List('product', message='Pilih produk untuk ditambahkan', choices=product_choices)]
+			answers = inquirer.prompt(questions)
+			
+			if answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 				pause()
 				return
-		except ValueError:
-			print(color("Masukan tidak valid. Masukkan bilangan bulat.", COLOR_ERROR))
+			
+			pid = int(answers['product'].split('.')[0])
+			product = next((p for p in self.products if p['id'] == pid), None)
+			
+			if not product:
+				print(color("Produk tidak ditemukan.", COLOR_ERROR))
+				pause()
+				return
+			
+			# Enter quantity
+			qty_questions = [inquirer.Text('qty', message='Jumlah', validate=lambda _, x: x.isdigit() and int(x) > 0 or 'Masukkan angka positif')]
+			qty_answers = inquirer.prompt(qty_questions)
+			
+			if qty_answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+				pause()
+				return
+			
+			qty = int(qty_answers['qty'])
+			
+			# Check if already in cart
+			cart_item = next((c for c in self.cart if c['id'] == pid), None)
+			if cart_item:
+				cart_item['qty'] += qty
+			else:
+				self.cart.append({
+					'id': product['id'],
+					'name': product['name'],
+					'price': product['price'],
+					'qty': qty
+				})
+			print(color(f"Berhasil menambahkan {qty} x {product['name']} ke keranjang.", COLOR_OK))
 			pause()
-			return
-		# Check if already in cart
-		cart_item = next((c for c in self.cart if c['id'] == pid), None)
-		if cart_item:
-			cart_item['qty'] += qty
-		else:
-			self.cart.append({
-				'id': product['id'],
-				'name': product['name'],
-				'price': product['price'],
-				'qty': qty
-			})
-		print(color(f"Berhasil menambahkan {qty} x {product['name']} ke keranjang.", COLOR_OK))
-		pause()
+		except KeyboardInterrupt:
+			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+			pause()
 
 	def remove_from_cart(self) -> None:
 		"""Menghapus item dari keranjang berdasarkan ID produk."""
@@ -303,27 +306,32 @@ class POS:
 			print(color("Keranjang kosong.", COLOR_ERROR))
 			pause()
 			return
-		self.show_cart()
-		print(color("Ketik 'b' atau 'B' untuk membatalkan dan kembali ke menu utama.", COLOR_INPUT))
-		pid_input: str = input("Masukkan ID produk untuk dihapus: ").strip()
-		if pid_input.lower() == 'b':
+		
+		try:
+			# Select item to remove
+			cart_choices = [f"{c['id']}. {c['name']} ({c['qty']}x {format_idr(c['price'])})" for c in self.cart]
+			questions = [inquirer.List('item', message='Pilih item untuk dihapus', choices=cart_choices)]
+			answers = inquirer.prompt(questions)
+			
+			if answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+				pause()
+				return
+			
+			pid = int(answers['item'].split('.')[0])
+			idx: int | None = next((i for i, c in enumerate(self.cart) if c['id'] == pid), None)
+			
+			if idx is None:
+				print(color("Item tidak ditemukan di keranjang.", COLOR_ERROR))
+				pause()
+				return
+			
+			removed = self.cart.pop(idx)
+			print(color(f"Berhasil menghapus {removed['name']} dari keranjang.", COLOR_OK))
+			pause()
+		except KeyboardInterrupt:
 			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 			pause()
-			return
-		try:
-			pid = int(pid_input)
-		except ValueError:
-			print(color("Masukan tidak valid. Masukkan bilangan bulat.", COLOR_ERROR))
-			pause()
-			return
-		idx: int | None = next((i for i, c in enumerate(self.cart) if c['id'] == pid), None)
-		if idx is None:
-			print(color("Item tidak ditemukan di keranjang.", COLOR_ERROR))
-			pause()
-			return
-		removed = self.cart.pop(idx)
-		print(color(f"Berhasil menghapus {removed['name']} dari keranjang.", COLOR_OK))
-		pause()
 
 	def show_cart(self) -> None:
 		"""Menampilkan isi keranjang belanja yang sedang aktif."""
@@ -352,65 +360,59 @@ class POS:
 			pause()
 			return
 		
-		# Customer Name Input
-		print(color("\n--- Informasi Pelanggan ---", COLOR_MENU))
-		customer_name: str = input("Nama pelanggan: ").strip()
-		if customer_name.lower() == 'b':
-			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
-			pause()
-			return
-		if not customer_name:
-			customer_name = "Guest"
-		
-		self.show_cart()
-		print(color("Ketik 'b' atau 'B' untuk membatalkan dan kembali ke menu utama.", COLOR_INPUT))
-		total: int = sum(c['qty'] * c['price'] for c in self.cart)
-		
-		# Payment Method Selection
-		print(color("\n--- Metode Pembayaran ---", COLOR_MENU))
-		print(color("1. Tunai", COLOR_MENU))
-		print(color("2. QRIS", COLOR_MENU))
-		while True:
-			payment_method_input: str = input("Pilih metode pembayaran (1 atau 2): ").strip()
-			if payment_method_input.lower() == 'b':
+		try:
+			# Customer Name Input
+			name_questions = [inquirer.Text('name', message='Nama pelanggan', default='Guest')]
+			name_answers = inquirer.prompt(name_questions)
+			
+			if name_answers is None:
 				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 				pause()
 				return
-			if payment_method_input in ['1', '2']:
-				break
-			print(color("Pilihan tidak valid. Masukkan 1 atau 2.", COLOR_ERROR))
-		
-		payment_method = "Tunai" if payment_method_input == '1' else "QRIS"
-		
-		# Handle different payment methods
-		if payment_method == "Tunai":
-			while True:
-				cash_input: str = input(f"Uang yang diterima (total {format_idr(total)}): ")
-				if cash_input.lower() == 'b':
+			
+			customer_name = name_answers['name'].strip() or "Guest"
+			
+			self.show_cart()
+			total: int = sum(c['qty'] * c['price'] for c in self.cart)
+			
+			# Payment Method Selection
+			payment_choices = ["Tunai", "QRIS"]
+			payment_questions = [inquirer.List('method', message='Pilih metode pembayaran', choices=payment_choices)]
+			payment_answers = inquirer.prompt(payment_questions)
+			
+			if payment_answers is None:
+				print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+				pause()
+				return
+			
+			payment_method = payment_answers['method']
+			
+			# Handle different payment methods
+			if payment_method == "Tunai":
+				cash_questions = [inquirer.Text('cash', message=f'Uang yang diterima (total {format_idr(total)})', validate=lambda _, x: float(x) >= total if self._validate_price(x) else False or 'Jumlah tidak cukup')]
+				cash_answers = inquirer.prompt(cash_questions)
+				
+				if cash_answers is None:
 					print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
 					pause()
 					return
-				try:
-					cash = float(cash_input)
-					if cash < total:
-						print(color("Uang tidak cukup. Masukkan jumlah yang tepat.", COLOR_ERROR))
-						continue
-					break
-				except ValueError:
-					print(color("Masukan tidak valid. Masukkan angka.", COLOR_ERROR))
-					continue
-			change: float = cash - total
-			print(color(f"Kembalian: {format_idr(change)}", COLOR_OK))
-			self.generate_receipt(total, cash, change, customer_name, payment_method)
-		else:  # QRIS
-			print(color("\n--- Pembayaran QRIS ---", COLOR_MENU))
-			self.display_qr_code(total, customer_name)
-			input(color("Tekan Enter setelah pembayaran berhasil: ", COLOR_INPUT))
-			self.generate_receipt(total, total, 0, customer_name, payment_method)
-		
-		print(color("Struk berhasil dibuat.", COLOR_OK))
-		self.cart.clear()
-		pause()
+				
+				cash = float(cash_answers['cash'])
+				change: float = cash - total
+				print(color(f"Kembalian: {format_idr(change)}", COLOR_OK))
+				self.generate_receipt(total, cash, change, customer_name, payment_method)
+			else:  # QRIS
+				print(color("\nPembayaran QRIS", COLOR_MENU))
+				self.display_qr_code(total, customer_name)
+				pause("Tekan Enter setelah pembayaran berhasil...")
+				self.generate_receipt(total, total, 0, customer_name, payment_method)
+			
+			print(color("Struk berhasil dibuat.", COLOR_OK))
+			self.cart.clear()
+			pause()
+		except KeyboardInterrupt:
+			print(color("Dibatalkan. Kembali ke menu utama.", COLOR_ERROR))
+			pause()
 
 	# ---------------------------------------------------------
 	# Penanganan Struk (Receipt Handling)
@@ -455,12 +457,12 @@ class POS:
 			# URL untuk pembayaran
 			payment_url = f"https://aspectxlol.vercel.app/uprak-pos/payment?data={encoded_data}"
 			
-			# Generate QR code
+			# Generate QR code - smaller size
 			qr = qrcode.QRCode(
 				version=1,
 				error_correction=qrcode.constants.ERROR_CORRECT_L,
-				box_size=2,
-				border=2,
+				box_size=1,
+				border=1,
 			)
 			qr.add_data(payment_url)
 			qr.make(fit=True)
@@ -468,61 +470,89 @@ class POS:
 			# Get QR code sebagai ASCII art
 			ascii_qr = qr.get_matrix()
 			
-			print(color("\n╔══════════════════════════════════════════════════╗", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("║       PEMBAYARAN QRIS - PINDAI DENGAN PONSEL      ║", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("╚══════════════════════════════════════════════════╝", COLOR_OK))
+			print(color("\n╔════════════════════════════════════╗", COLOR_OK))
+			print(color("║    PEMBAYARAN QRIS - PINDAI PONSEL  ║", COLOR_OK))
+			print(color("╚════════════════════════════════════╝", COLOR_OK))
 			print()
 			
 			# Display QR code
 			for row in ascii_qr:
-				line = "  "
+				line = ""
 				for cell in row:
 					line += "██" if cell else "  "
 				print(color(line, COLOR_OK))
 			
 			print()
-			print(color("╔══════════════════════════════════════════════════╗", COLOR_OK))
-			print(color("║  Nominal: " + format_idr(amount)[:38].ljust(38) + " ║", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("╚══════════════════════════════════════════════════╝", COLOR_OK))
+			print(color("╔════════════════════════════════════╗", COLOR_OK))
+			print(color(f"║ Nominal: {format_idr(amount)[:24].ljust(24)} ║", COLOR_OK))
+			print(color("╚════════════════════════════════════╝", COLOR_OK))
 			
 		except Exception as e:
 			print(color(f"Kesalahan saat membuat kode QR: {e}", COLOR_ERROR))
 			# Fallback: just show the payment URL
 			payment_url = f"https://aspectxlol.vercel.app/uprak-pos/payment?amount={int(amount)}"
 			
-			print(color("\n╔══════════════════════════════════════════════════╗", COLOR_OK))
-			print(color("║       PEMBAYARAN QRIS                             ║", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("║  Nominal: " + format_idr(amount)[:38].ljust(38) + " ║", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("║  Buka tautan ini di ponsel Anda:                 ║", COLOR_OK))
-			print(color("║  " + payment_url[:44] + " ║", COLOR_OK))
-			print(color("║                                                  ║", COLOR_OK))
-			print(color("╚══════════════════════════════════════════════════╝", COLOR_OK))
+			print(color("\n╔════════════════════════════════════╗", COLOR_OK))
+			print(color("║    PEMBAYARAN QRIS                  ║", COLOR_OK))
+			print(color("║ Nominal: " + format_idr(amount)[:24].ljust(24) + " ║", COLOR_OK))
+			print(color("║                                    ║", COLOR_OK))
+			print(color("║ Buka tautan ini di ponsel:         ║", COLOR_OK))
+			print(color("║ " + payment_url[:32].ljust(32) + " ║", COLOR_OK))
+			print(color("╚════════════════════════════════════╝", COLOR_OK))
 	
 
 # =========================================================
 # Tampilan Menu (Menu Rendering)
 # ---------------------------------------------------------
-# Bagian ini menampilkan menu utama dan menerima pilihan
-# pengguna untuk menjalankan fitur-fitur POS.
+# Bagian ini menampilkan menu utama dengan inquirer untuk
+# navigasi arrow keys yang stabil di Windows.
 # =========================================================
+
 def main_menu() -> str:
-	"""Menampilkan menu utama dan mengembalikan pilihan pengguna."""
-	clear_screen()
-	print(color("=== SISTEM POS SEKOLAH ===", COLOR_HEADER))
-	print(color("1. Tambah Produk", COLOR_MENU))
-	print(color("2. Edit Produk", COLOR_MENU))
-	print(color("3. Lihat Daftar Produk", COLOR_MENU))
-	print(color("4. Tambah ke Keranjang", COLOR_MENU))
-	print(color("5. Hapus dari Keranjang", COLOR_MENU))
-	print(color("6. Lihat Keranjang", COLOR_MENU))
-	print(color("7. Checkout", COLOR_MENU))
-	print(color("0. Keluar", COLOR_MENU))
-	return input(color("Pilih opsi: ", COLOR_INPUT)).strip()
+	"""Menampilkan menu utama dengan TUI dan arrow key support."""
+	# Clear screen
+	os.system('cls' if os.name == 'nt' else 'clear')
+	
+	# Print borders
+	width = 80
+	print(color("╔" + "═" * (width - 2) + "╗", COLOR_HEADER))
+	header = "═══ SISTEM POS SEKOLAH ═══"
+	header_x = (width - len(header) - 2) // 2
+	print(color("║" + " " * header_x + header + " " * (width - header_x - len(header) - 2) + "║", COLOR_HEADER))
+	print(color("╠" + "═" * (width - 2) + "╣", COLOR_HEADER))
+	
+	menu_items = [
+		"1. Tambah Produk",
+		"2. Edit Produk",
+		"3. Lihat Daftar Produk",
+		"4. Tambah ke Keranjang",
+		"5. Hapus dari Keranjang",
+		"6. Lihat Keranjang",
+		"7. Checkout",
+		"0. Keluar"
+	]
+	
+	# Use inquirer for menu selection
+	questions = [
+		inquirer.List(
+			'option',
+			message='Pilih opsi',
+			choices=menu_items,
+			carousel=True
+		)
+	]
+	
+	try:
+		answers = inquirer.prompt(questions)
+		
+		if answers is None:
+			return '0'
+		
+		selected = answers['option']
+		choice = selected[0]  # Get the first character (the number)
+		return choice
+	except KeyboardInterrupt:
+		return '0'
 
 # =========================================================
 # Loop Utama (Main Loop)
@@ -562,7 +592,8 @@ def main() -> None:
 			pause()
 		elif choice == '7':
 			pos.checkout()
-		elif choice == '0':
+		elif choice == '8' or choice == '0':
+			clear_screen()
 			print(color("Keluar dari POS. Sampai jumpa!", COLOR_HEADER))
 			break
 		else:
